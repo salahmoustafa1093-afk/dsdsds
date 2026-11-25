@@ -1,32 +1,43 @@
 // إضافات مقترحة على gff-backend/prisma/schema.prisma عشان "رادار" والمتابعة تشتغل.
-// ده اقتراح للمراجعة مش migration جاهزة: أسماء العلاقات والـ relations العكسية لازم تتظبط مع الموديلات الموجودة.
-// الترتيب حسب الأولوية: A و B في المرحلة 2، والباقي في المرحلة 3.
+// ده اقتراح للمراجعة، مش migration جاهزة.
+//
+// ماشي على نفس اتفاقيات السكيما الحالية:
+// - كل حقل من أكتر من كلمة ليه @map بـ snake_case.
+// - كل جدول ليه @@map بالجمع.
+// - كل جدول رئيسي فيه companyId.
+// - الـ back-relations المطلوبة في Customer و Company مكتوبة كتعليقات جنب كل قسم.
+//
+// الترتيب:
+// - المرحلة 2: A و B.
+// - المرحلة 3: الباقي.
 
-// ───────────── A. توسيع Customer ─────────────
+// ───────────── A. توسيع Customer (المرحلة 2) ─────────────
 // يتضاف جوه model Customer:
-//   segment            BreederSegment?
+//   segment            BreederSegment? @map("segment")
+//   subSegment         String?         @map("sub_segment")          // H1|H2|H3|H4|S1|S2|S3|S4|UNKNOWN (segments.md)
 //   governorate        String?
 //   markaz             String?
 //   village            String?
 //   latitude           Decimal?        @db.Decimal(10, 6)
 //   longitude          Decimal?        @db.Decimal(10, 6)
-//   whatsappPhone      String?
-//   contactConsent     Boolean         @default(false)
-//   consentAt          DateTime?
-//   consentSource      String?         // rep | branch | whatsapp_optin
-//   optOutAt           DateTime?
-//   acquisitionSource  String?         // rep | branch | referral | ad
-//   lifecycleStage     LifecycleStage  @default(LEAD)
-//   lifecycleUpdatedAt DateTime?
+//   whatsappPhone      String?         @map("whatsapp_phone")
+//   contactConsent     Boolean         @default(false) @map("contact_consent")
+//   consentAt          DateTime?       @map("consent_at")
+//   consentSource      String?         @map("consent_source")       // rep | branch | whatsapp_optin
+//   optOutAt           DateTime?       @map("opt_out_at")
+//   acquisitionSource  String?         @map("acquisition_source")   // rep | branch | referral | ad
+//   lifecycleStage     LifecycleStage? @map("lifecycle_stage")      // من غير default: يتحسب من تاريخ الفواتير بعد الـ migration
+//   lifecycleUpdatedAt DateTime?       @map("lifecycle_updated_at")
 //   herds              CustomerHerd[]
-//   interactions       CustomerInteraction[]
 //   @@index([segment])
 //   @@index([governorate])
 //   @@index([lifecycleStage])
+//
+// خطوة backfill بعد الـ migration: lifecycleStage = ACTIVE / DORMANT / CHURNED حسب آخر فاتورة (أقل من 6 شهور / 6-12 / أكتر من 12).
 
 enum BreederSegment {
-  HOUSEHOLD    // تربية منزلية
-  SMALL_FARM   // مزرعة صغيرة
+  HOUSEHOLD // تربية منزلية
+  SMALL_FARM // مزرعة صغيرة
   MEDIUM_FARM
   COMMERCIAL
 }
@@ -42,7 +53,8 @@ enum LifecycleStage {
   CHURNED
 }
 
-// ───────────── B. القطيع / الطيور عند العميل ─────────────
+// ───────────── B. القطيع / الطيور عند العميل (المرحلة 2) ─────────────
+// يتضاف جوه model Company: customerHerds CustomerHerd[]
 enum Species {
   BROILER
   LAYER
@@ -89,26 +101,32 @@ enum DataSource {
 }
 
 model CustomerHerd {
-  id                String     @id @default(uuid())
-  customerId        String
-  customer          Customer   @relation(fields: [customerId], references: [id])
+  id                String      @id @default(uuid())
+  companyId         String      @map("company_id")
+  company           Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerId        String      @map("customer_id")
+  customer          Customer    @relation(fields: [customerId], references: [id])
   species           Species
-  headCount         Int
+  headCount         Int         @map("head_count")
   purpose           HerdPurpose
-  cycleStartDate    DateTime?
-  expectedCycleEnd  DateTime?
-  currentFeedSource FeedSource @default(UNKNOWN)
-  currentFeedBrand  String?
-  monthlyFeedKg     Decimal?   @db.Decimal(10, 2)
-  dataSource        DataSource
-  recordedById      String
-  recordedAt        DateTime   @default(now())
+  cycleStartDate    DateTime?   @map("cycle_start_date")
+  expectedCycleEnd  DateTime?   @map("expected_cycle_end")
+  currentFeedSource FeedSource  @default(UNKNOWN) @map("current_feed_source")
+  currentFeedBrand  String?     @map("current_feed_brand")
+  monthlyFeedKg     Decimal?    @map("monthly_feed_kg") @db.Decimal(10, 2)
+  dataSource        DataSource  @map("data_source")
+  recordedById      String      @map("recorded_by_id")
+  recordedAt        DateTime    @default(now()) @map("recorded_at")
 
+  @@index([companyId])
   @@index([customerId])
   @@index([species])
+  @@map("customer_herds")
 }
 
-// ───────────── C. سجل التفاعلات ─────────────
+// ───────────── C. سجل التفاعلات (المرحلة 3) ─────────────
+// يتضاف جوه model Customer مع القسم ده: interactions CustomerInteraction[]
+// ويتضاف جوه model Company: customerInteractions CustomerInteraction[]
 enum InteractionType {
   CALL
   VISIT
@@ -122,37 +140,48 @@ enum InteractionType {
 
 model CustomerInteraction {
   id         String          @id @default(uuid())
-  customerId String
+  companyId  String          @map("company_id")
+  company    Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerId String          @map("customer_id")
   customer   Customer        @relation(fields: [customerId], references: [id])
   type       InteractionType
   summary    String
-  rawText    String?
-  sentiment  Int?            // -2 .. +2
+  rawText    String?         @map("raw_text")
+  sentiment  Int? // -2 .. +2
   tags       String[]
-  productId  String?
-  userId     String
-  createdAt  DateTime        @default(now())
+  productId  String?         @map("product_id")
+  userId     String          @map("user_id")
+  createdAt  DateTime        @default(now()) @map("created_at")
 
+  @@index([companyId])
   @@index([customerId, createdAt])
+  @@map("customer_interactions")
 }
 
-// ───────────── D. رسايل واتساب (الخدمة الحالية بتخزنها في الذاكرة المؤقتة وبتضيع) ─────────────
+// ───────────── D. رسايل واتساب (المرحلة 3) ─────────────
+// الخدمة الحالية بتخزن الرسايل في الذاكرة المؤقتة وبتضيع.
+// يتضاف جوه model Company: whatsappMessages WhatsAppMessage[]
 model WhatsAppMessage {
   id           String   @id @default(uuid())
-  waMessageId  String   @unique
-  customerId   String?
+  companyId    String   @map("company_id")
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  waMessageId  String   @unique @map("wa_message_id")
+  customerId   String?  @map("customer_id")
   phone        String
-  direction    String   // IN | OUT
+  direction    String // IN | OUT
   type         String
   body         String?
-  templateName String?
+  templateName String?  @map("template_name")
   status       String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime @default(now()) @map("created_at")
 
+  @@index([companyId])
   @@index([customerId])
+  @@map("whatsapp_messages")
 }
 
-// ───────────── E. الاستبيانات ─────────────
+// ───────────── E. الاستبيانات (المرحلة 3) ─────────────
+// يتضاف جوه model Company: surveys Survey[]
 enum SurveyStatus {
   DRAFT
   APPROVED
@@ -161,34 +190,41 @@ enum SurveyStatus {
 }
 
 model Survey {
-  id            String          @id @default(uuid())
+  id            String           @id @default(uuid())
+  companyId     String           @map("company_id")
+  company       Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   title         String
   purpose       String
-  targetSegment BreederSegment?
-  targetSpecies Species?
+  targetSegment BreederSegment?  @map("target_segment")
+  targetSpecies Species?         @map("target_species")
   questions     Json
-  channel       String          // REP | WHATSAPP
-  status        SurveyStatus    @default(DRAFT)
-  createdById   String
-  approvedById  String?
-  createdAt     DateTime        @default(now())
+  channel       String // REP | WHATSAPP
+  status        SurveyStatus     @default(DRAFT)
+  createdById   String           @map("created_by_id")
+  approvedById  String?          @map("approved_by_id")
+  createdAt     DateTime         @default(now()) @map("created_at")
   responses     SurveyResponse[]
+
+  @@index([companyId])
+  @@map("surveys")
 }
 
 model SurveyResponse {
   id           String   @id @default(uuid())
-  surveyId     String
-  survey       Survey   @relation(fields: [surveyId], references: [id])
-  customerId   String?
+  surveyId     String   @map("survey_id")
+  survey       Survey   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  customerId   String?  @map("customer_id")
+  responseCode String?  @map("response_code") // رقم استبيان لغير العملاء (F4-001)
   answers      Json
-  collectedVia String   // REP | WHATSAPP
-  consent      Boolean
-  collectedAt  DateTime @default(now())
+  collectedVia String   @map("collected_via") // REP | WHATSAPP
+  collectedAt  DateTime @default(now()) @map("collected_at")
 
   @@index([surveyId])
+  @@map("survey_responses")
 }
 
-// ───────────── F. مسار المنتجات الجديدة ─────────────
+// ───────────── F. مسار المنتجات الجديدة (المرحلة 3) ─────────────
+// يتضاف جوه model Company: productIdeas ProductIdea[]
 enum IdeaStage {
   IDEA
   DESK_RESEARCH
@@ -201,107 +237,137 @@ enum IdeaStage {
 
 model ProductIdea {
   id                String           @id @default(uuid())
-  code              String           @unique // OPP-001
+  companyId         String           @map("company_id")
+  company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  code              String // OPP-001
   title             String
   description       String
-  category          String           // FEED | PULSES | VET | SUPPLIES | ADDITIVE | SERVICE
-  targetSpecies     Species[]
-  targetSegment     BreederSegment[]
-  problemStatement  String
+  category          String // FEED | PULSES | VET | SUPPLIES | ADDITIVE | SERVICE
+  targetSpecies     Species[]        @map("target_species")
+  targetSegment     BreederSegment[] @map("target_segment")
+  problemStatement  String           @map("problem_statement")
   evidence          Json
-  estPriceEgp       Decimal?         @db.Decimal(12, 2)
-  estUnitCostEgp    Decimal?         @db.Decimal(12, 2)
-  needsRegistration Boolean          @default(false)
+  estPriceEgp       Decimal?         @map("est_price_egp") @db.Decimal(12, 2)
+  estUnitCostEgp    Decimal?         @map("est_unit_cost_egp") @db.Decimal(12, 2)
+  needsRegistration Boolean          @default(false) @map("needs_registration")
   stage             IdeaStage        @default(IDEA)
   score             Decimal?         @db.Decimal(4, 1) // من 35
-  pilotBranchId     String?
-  createdById       String
-  ownerId           String
-  decidedById       String?
-  decidedAt         DateTime?
-  launchedProductId String?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  pilotBranchId     String?          @map("pilot_branch_id")
+  createdById       String           @map("created_by_id")
+  ownerId           String           @map("owner_id")
+  decidedById       String?          @map("decided_by_id")
+  decidedAt         DateTime?        @map("decided_at")
+  launchedProductId String?          @map("launched_product_id")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  @@unique([companyId, code])
+  @@map("product_ideas")
 }
 
 // يتضاف جوه model Product:
-//   launchDate    DateTime?
-//   isPilot       Boolean   @default(false)
-//   targetSpecies Species[]
-//   packSizeKg    Decimal?  @db.Decimal(8, 2)
-//   feedFormulaId String?
+//   launchDate    DateTime? @map("launch_date")
+//   isPilot       Boolean   @default(false) @map("is_pilot")
+//   targetSpecies Species[] @map("target_species")
+//   packSizeKg    Decimal?  @map("pack_size_kg") @db.Decimal(8, 2)
+//   feedFormulaId String?   @map("feed_formula_id")
 
-// ───────────── G. أسعار السوق ─────────────
+// ───────────── G. أسعار السوق (المرحلة 3) ─────────────
+// يتضاف جوه model Company: marketPrices MarketPrice[]
 model MarketPrice {
   id           String   @id @default(uuid())
-  itemType     String   // FEED_RETAIL | RAW_MATERIAL | LIVE_BIRD | EGGS | MEAT | MILK | CHICKS | VET | PULSE | FORAGE
-  itemName     String
+  companyId    String   @map("company_id")
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  itemType     String   @map("item_type") // FEED_RETAIL | RAW_MATERIAL | LIVE_BIRD | EGGS | MEAT | MILK | CHICKS | VET | PULSE | FORAGE
+  itemName     String   @map("item_name")
   brand        String?
-  competitorId String?
+  packSizeKg   Decimal? @map("pack_size_kg") @db.Decimal(8, 2)
+  competitorId String?  @map("competitor_id")
   unit         String
-  priceMinEgp  Decimal  @db.Decimal(12, 2)
-  priceMaxEgp  Decimal  @db.Decimal(12, 2)
+  priceMinEgp  Decimal  @map("price_min_egp") @db.Decimal(12, 2)
+  priceMaxEgp  Decimal  @map("price_max_egp") @db.Decimal(12, 2)
   governorate  String?
   markaz       String?
-  observedAt   DateTime
-  source       String   // REP_FIELD | WEB | BULLETIN | CUSTOMER | AGENT
-  sourceUrl    String?
-  confidence   Int      // 1..3
-  recordedById String
-  createdAt    DateTime @default(now())
+  observedAt   DateTime @map("observed_at")
+  source       String // REP_FIELD | WEB | BULLETIN | CUSTOMER | AGENT
+  sourceUrl    String?  @map("source_url")
+  confidence   Int // 1..3
+  recordedById String   @map("recorded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
 
+  @@index([companyId])
   @@index([itemType, observedAt])
+  @@map("market_prices")
 }
 
-// ───────────── H. المنافسين ─────────────
+// ───────────── H. المنافسين (المرحلة 3) ─────────────
+// يتضاف جوه model Company: competitors Competitor[]
 model Competitor {
-  id          String              @id @default(uuid())
-  name        String
-  type        String              // FEED_MILL | LOCAL_MILL | DISTRIBUTOR | VET_PHARMACY | IMPORTER | VILLAGE_DEALER
+  id           String              @id @default(uuid())
+  companyId    String              @map("company_id")
+  company      Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name         String
+  type         String // FEED_MILL | LOCAL_MILL | DISTRIBUTOR | VET_PHARMACY | IMPORTER | VILLAGE_DEALER
   governorates String[]
-  notes       String?
-  products    CompetitorProduct[]
+  notes        String?
+  products     CompetitorProduct[]
+
+  @@index([companyId])
+  @@map("competitors")
 }
 
 model CompetitorProduct {
   id           String     @id @default(uuid())
-  competitorId String
-  competitor   Competitor @relation(fields: [competitorId], references: [id])
+  competitorId String     @map("competitor_id")
+  competitor   Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
   name         String
   category     String
   species      Species?
-  packSizeKg   Decimal?   @db.Decimal(8, 2)
-  lastPriceEgp Decimal?   @db.Decimal(12, 2)
-  firstSeenAt  DateTime   @default(now())
+  packSizeKg   Decimal?   @map("pack_size_kg") @db.Decimal(8, 2)
+  lastPriceEgp Decimal?   @map("last_price_egp") @db.Decimal(12, 2)
+  firstSeenAt  DateTime   @default(now()) @map("first_seen_at")
   notes        String?
+
+  @@map("competitor_products")
 }
 
-// ───────────── I. مهام ميدانية للمندوبين ─────────────
+// ───────────── I. مهام ميدانية للمندوبين (المرحلة 3) ─────────────
+// يتضاف جوه model Company: fieldTasks FieldTask[]
 model FieldTask {
-  id           String    @id @default(uuid())
-  assignedToId String
-  customerId   String?
-  type         String    // VISIT | SURVEY | PRICE_CHECK | SAMPLE_TRIAL
+  id           String   @id @default(uuid())
+  companyId    String   @map("company_id")
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assignedToId String   @map("assigned_to_id")
+  customerId   String?  @map("customer_id")
+  type         String // VISIT | SURVEY | PRICE_CHECK | SAMPLE_TRIAL
   instructions String
-  dueAt        DateTime
-  status       String    @default("OPEN") // OPEN | DONE | CANCELLED
+  dueAt        DateTime @map("due_at")
+  status       String   @default("DRAFT") // DRAFT | APPROVED | DONE | CANCELLED
   result       Json?
-  createdById  String
-  approvedById String?
-  createdAt    DateTime  @default(now())
+  createdById  String   @map("created_by_id")
+  approvedById String?  @map("approved_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([companyId])
+  @@map("field_tasks")
 }
 
-// ───────────── J. لقطة يومية لمقاييس العميل ─────────────
+// ───────────── J. لقطة يومية لمقاييس العميل (المرحلة 3) ─────────────
+// يتضاف جوه model Company: customerMetrics CustomerMetric[]
 model CustomerMetric {
   id              String   @id @default(uuid())
-  customerId      String
-  asOf            DateTime
-  recencyDays     Int
-  orders90d       Int
-  spend90d        Decimal  @db.Decimal(12, 2)
-  avgIntervalDays Decimal? @db.Decimal(8, 2)
-  churnRisk       Decimal? @db.Decimal(4, 3)
-  segmentLabel    String?
+  companyId       String   @map("company_id")
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerId      String   @map("customer_id")
+  asOf            DateTime @map("as_of")
+  recencyDays     Int      @map("recency_days")
+  orders90d       Int      @map("orders_90d")
+  spend90d        Decimal  @map("spend_90d") @db.Decimal(12, 2)
+  avgIntervalDays Decimal? @map("avg_interval_days") @db.Decimal(8, 2)
+  churnRisk       Decimal? @map("churn_risk") @db.Decimal(4, 3)
+  segmentLabel    String?  @map("segment_label")
 
   @@unique([customerId, asOf])
+  @@index([companyId])
+  @@map("customer_metrics")
 }
