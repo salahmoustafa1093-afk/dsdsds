@@ -1,0 +1,25 @@
+# النبض اليومي: الأحد للخميس 7:40 الصبح بتوقيت القاهرة. شغل خفيف ومن غير workflow.
+name: gff-radar-daily-pulse
+agent: ./agent.md
+environment_id: ./environment.yaml
+vault_ids: []
+resources:
+  - ./memory_store-market-knowledge.yaml
+schedule:
+  type: cron
+  expression: "40 7 * * 0-4"
+  timezone: Africa/Cairo
+budget:
+  type: limit
+  max_list_cost: {currency: USD, amount: "400"}
+initial_events:
+  - type: user.message
+    content:
+      - type: text
+        text: |
+          ده النبض اليومي. اقرا /sources/registry.md و /calendar/ وآخر 3 سطور في /log/.
+          1) راجع مصادر الأسعار اليومية (أعلاف، ذرة صفرا، كسب صويا، ردة، برسيم، فراخ وبيض، مواشي حية) وقارنها بآخر قيمة مسجلة في /sources/price-log.md.
+          2) دوّر على أي تحذير بيطري أو قرار حكومي جديد يخص الأعلاف أو الثروة الحيوانية أو الدواجن في مصر خلال آخر 48 ساعة.
+          3) شوف لو فيه موسم أو تاريخ مهم قرب خلال 6 أسابيع في /calendar/.
+          لو فيه تغيّر سعر أكبر من 5% أو تحذير أو قرار مهم: اكتب ملاحظة قصيرة (5 سطور بالكتير) في outputs باسم pulse-<التاريخ>.md فيها: إيه اللي حصل، المصدر والتاريخ، وتأثيره المتوقع على المربي الصغير وعلى GFF.
+          حدّث /sources/price-log.md وزوّد سطر في /log/. لو مفيش جديد مهم اكتب سطر "مفيش جديد مهم" في /log/ وبس.
